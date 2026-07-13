@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="BID SHIELD">
+  <rect width="64" height="64" rx="16" fill="#0b1425"/>
+  <path d="M32 9 51 17v13c0 12-7.4 21-19 26C20.4 51 13 42 13 30V17l19-8Z" fill="#2dd4bf" opacity=".18"/>
+  <path d="M32 13 47 19.3v10.4c0 9.7-5.7 17-15 21.5-9.3-4.5-15-11.8-15-21.5V19.3L32 13Z" fill="none" stroke="#5eead4" stroke-width="3"/>
+  <path d="M23 35V24h10c4.6 0 7 1.8 7 5 0 1.8-.9 3.2-2.6 4 2.3.7 3.6 2.3 3.6 4.6 0 3.6-2.7 5.4-8 5.4H23v-8Zm6-6h4c1.2 0 1.8-.4 1.8-1.3S34.2 26.4 33 26.4h-4V29Zm0 9.4h4.6c1.4 0 2.1-.5 2.1-1.5s-.7-1.5-2.1-1.5H29v3Z" fill="#e6fffb"/>
+</svg>
