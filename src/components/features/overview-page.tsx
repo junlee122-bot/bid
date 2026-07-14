@@ -85,6 +85,7 @@ export function OverviewPage() {
         actions={
           <div className="flex flex-wrap gap-2">
             <ActionLink href="/scenario" icon="activity">스트레스 테스트</ActionLink>
+            <ActionLink href="/decision" icon="scale">의사결정실</ActionLink>
             <ActionLink href="/data" icon="database" variant="primary">데이터 연결</ActionLink>
           </div>
         }
@@ -121,7 +122,7 @@ export function OverviewPage() {
         <MetricCard
           label="권고 필요자금"
           value={compactWon(portfolio.totalFundingRequirementKrw)}
-          description="현금 공백과 유동성 버퍼를 포함한 권고액"
+          description="기업키별 공유 현금·공통비 중복을 조정한 권고액"
           icon="wallet"
           tone={portfolio.totalFundingRequirementKrw > 0 ? "warning" : "success"}
         />
@@ -217,7 +218,7 @@ export function OverviewPage() {
                   <div className="flex min-h-44 flex-col items-center justify-center rounded-lg border border-dashed border-border px-5 text-center">
                     <Icon name="checkCircle" className="text-success" size={22} />
                     <p className="mt-3 text-sm font-semibold">즉시 대응할 자금 공백이 없습니다</p>
-                    <p className="mt-1 text-xs text-muted-foreground">스트레스 시나리오에서도 다시 확인해 보세요.</p>
+                    <p className="mt-1 text-xs text-muted-foreground">확률형 스트레스와 제한 예산 배분도 다시 확인해 보세요.</p>
                   </div>
                 ) : (
                   actionQueue.map((contract, index) => {

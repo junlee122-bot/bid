@@ -21,6 +21,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import {
+  assessWorkspaceDataQuality,
   createContractRecordFromSources,
   type ApiErrorBody,
   type CompanyCsvImportResult,
@@ -77,8 +78,10 @@ function conservativeAssumptions(
   company: CompanyFinancialImportRecord,
 ): ContractCreationAssumptions {
   const revenue = Math.max(company.annualRevenue, 1);
-  const operatingMarginPct = (company.operatingProfit / revenue) * 100;
-  const estimatedCostRatePct = clamp(100 - operatingMarginPct, 72, 98);
+  // Company-wide operating margin is not a project cost rate. Use a visible,
+  // neutral sector starting point and require contract-level evidence later.
+  const estimatedCostRatePct =
+    procurement.kind === "construction" ? 92 : procurement.kind === "service" ? 88 : 90;
   const durationMonths = procurement.kind === "construction" ? 14 : procurement.kind === "service" ? 12 : 8;
   const paymentDelayDays = Math.round(clamp(company.averageCollectionDays ?? 60, 15, 180));
   const fixedCostRatePct = procurement.kind === "service" ? 60 : procurement.kind === "construction" ? 35 : 25;
@@ -103,7 +106,7 @@ function conservativeAssumptions(
     fixedCostRatePct,
     paymentSchedule: procurement.kind === "construction" ? "milestone" : "monthly",
     companyDataQuality: "estimated",
-    notes: "데이터 허브의 보수적 기본 가정으로 생성되었습니다. 계약 조건 확인 후 반드시 보정해야 합니다.",
+    notes: "업종별 초기 원가율을 사용했으며 기업 전체 영업이익률을 계약 원가율로 전용하지 않았습니다. 계약 조건 확인 후 반드시 보정해야 합니다.",
   };
 }
 
@@ -145,12 +148,14 @@ function readApiError(body: unknown, fallback: string): string {
 function WorkspaceSummary() {
   const { contracts, source, updatedAt, hydrated, resetDemo } = useWorkspace();
   const config = sourceMeta[source];
-  const syntheticCount = contracts.filter((record) => record.isSynthetic).length;
   const verifiedCount = contracts.filter((record) => record.dataQuality === "verified").length;
   const totalAmount = contracts.reduce((sum, record) => sum + record.contractAmountKrw, 0);
-  const qualityScore = contracts.length === 0
-    ? 0
-    : Math.round(((verifiedCount * 100) + ((contracts.length - verifiedCount - syntheticCount) * 70) + (syntheticCount * 35)) / contracts.length);
+  const quality = assessWorkspaceDataQuality(
+    contracts,
+    new Date().toISOString().slice(0, 10),
+  );
+  const qualityScore = Math.round(quality.completeness * 0.65 + quality.freshness * 0.35);
+  const qualityIssues = [...new Set(quality.issues.map((issue) => issue.message))].slice(0, 5);
 
   function exportWorkspace() {
     const date = new Date().toISOString().slice(0, 10);
@@ -218,10 +223,10 @@ function WorkspaceSummary() {
         </dl>
         <DataQualityIndicator
           score={qualityScore}
-          completeness={contracts.length ? 100 : 0}
-          freshness={source === "demo" ? 45 : 75}
-          sourceCount={source === "mixed" ? 2 : 1}
-          issues={syntheticCount ? [`합성 레코드 ${syntheticCount}건은 실제 의사결정에 사용할 수 없습니다.`] : []}
+          completeness={quality.completeness}
+          freshness={quality.freshness}
+          sourceCount={quality.sourceCount}
+          issues={qualityIssues}
         />
       </CardContent>
     </Card>
@@ -425,10 +430,26 @@ function ProcurementPanel({ companies, selectedCompany }: ProcurementPanelProps)
     try {
       const assumptions = conservativeAssumptions(record, company);
       const contract = createContractRecordFromSources(record, company, assumptions);
+      const bidderMatch = contract.provenance?.procurement.bidderMatch;
+      if (
+        bidderMatch === "mismatch" &&
+        !window.confirm(
+          "선택한 기업과 나라장터 낙찰자명이 일치하지 않습니다. 실제 계약으로 간주하지 않고 가상 분석으로 추가할까요?",
+        )
+      ) {
+        setSuccessMessage(null);
+        setError("낙찰자 불일치로 추가를 중단했습니다. 결합할 기업을 다시 선택해 주세요.");
+        return;
+      }
       appendContracts([contract], "api");
       setError(null);
+      const lifecycleLabel = {
+        opportunity: "입찰 전 기회",
+        awarded: "낙찰",
+        contracted: "계약",
+      }[contract.provenance?.procurement.lifecycleStage ?? "opportunity"];
       setSuccessMessage(
-        `${record.title}을(를) 추가했습니다. 초기 가정: 원가율 ${formatPct(assumptions.estimatedCostRatePct)}, `
+        `${record.title}을(를) ${lifecycleLabel} 분석으로 추가했습니다. 초기 가정: 원가율 ${formatPct(assumptions.estimatedCostRatePct)}, `
         + `수행 ${assumptions.durationMonths}개월, 회수 지연 ${assumptions.paymentDelayDays}일, 금리 ${formatPct(assumptions.annualInterestRatePct)}.`,
       );
     } catch (mergeError) {
@@ -445,7 +466,7 @@ function ProcurementPanel({ companies, selectedCompany }: ProcurementPanelProps)
         <div className="flex items-start justify-between gap-4">
           <div>
             <CardTitle className="flex items-center gap-2"><Icon name="database" size={17} className="text-primary" />나라장터 공개 데이터</CardTitle>
-            <CardDescription className="mt-1">공고·낙찰·계약을 표준화해 기업 재무와 분석 계약으로 결합합니다.</CardDescription>
+            <CardDescription className="mt-1">공고는 입찰 전 기회, 낙찰·계약은 수주 단계로 구분하고 기업·낙찰자 일치를 확인해 결합합니다.</CardDescription>
           </div>
           <Badge variant={result?.source === "live" ? "success" : result ? "warning" : "neutral"} dot={Boolean(result)}>
             {result?.source === "live" ? "LIVE" : result?.source === "mixed" ? "LIVE + DEMO" : result ? "DEMO" : "대기"}
@@ -664,7 +685,7 @@ export function DataHubPage() {
           <CardHeader><CardTitle>결합 시 적용되는 보수 가정</CardTitle><CardDescription>조달 공개 데이터만으로 알 수 없는 값은 숨기지 않고 아래 규칙으로 초기화합니다.</CardDescription></CardHeader>
           <CardContent className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {[
-              ["계약 원가율", "기업 영업이익률 역산 · 72~98% 제한"],
+              ["계약 원가율", "공사 92% · 용역 88% · 물품 90% 초기값"],
               ["회수 지연", "기업 평균 회수일 · 미입력 시 60일"],
               ["금리", "신용등급별 5.2~9.2% · 미입력 시 7.5%"],
               ["공정 조건", "공사·용역·물품별 기간·선급·보증 가정"],

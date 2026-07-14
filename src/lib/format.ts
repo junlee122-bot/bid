@@ -40,5 +40,7 @@ export function downloadTextFile(filename: string, content: string, type = "text
   document.body.appendChild(anchor);
   anchor.click();
   anchor.remove();
-  URL.revokeObjectURL(url);
+  // Keep the object URL alive long enough for Chromium/WebKit to begin the
+  // asynchronous download. Immediate revocation can cancel larger reports.
+  window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
 }

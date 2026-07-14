@@ -116,3 +116,56 @@ body {
     transition-duration: 0.01ms !important;
   }
 }
+
+@media print {
+  @page {
+    size: A4 landscape;
+    margin: 10mm;
+  }
+
+  :root {
+    color-scheme: light;
+    --background: white;
+    --foreground: oklch(0.2 0.015 250);
+    --card: white;
+    --card-elevated: white;
+    --card-foreground: oklch(0.2 0.015 250);
+    --muted: oklch(0.96 0.01 245);
+    --muted-foreground: oklch(0.45 0.02 245);
+    --border: oklch(0.82 0.02 245);
+    --input: white;
+  }
+
+  body {
+    background: white !important;
+  }
+
+  body > div > aside,
+  body > div > header,
+  a[href="#main-content"],
+  .no-print {
+    display: none !important;
+  }
+
+  main {
+    min-height: auto !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: white !important;
+  }
+
+  .decision-report {
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+
+  .print-avoid-break,
+  tr {
+    break-inside: avoid;
+  }
+
+  a {
+    color: inherit;
+    text-decoration: none;
+  }
+}

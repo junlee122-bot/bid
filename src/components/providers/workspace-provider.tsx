@@ -30,6 +30,79 @@ const STORAGE_KEY = "bid-shield.workspace.v1";
 const DEMO_UPDATED_AT = "2026-07-13T00:00:00.000Z";
 const WorkspaceContext = createContext<WorkspaceContextValue | null>(null);
 
+function isObject(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function isNullableNumber(value: unknown): value is number | null {
+  return value === null || isFiniteNumber(value);
+}
+
+function isNullableString(value: unknown): value is string | null {
+  return value === null || typeof value === "string";
+}
+
+function hasValidProvenance(value: unknown): boolean {
+  if (!isObject(value)) return false;
+  const company = value.company;
+  const procurement = value.procurement;
+  const fields = value.fields;
+  if (!isObject(company) || !isObject(procurement) || !isObject(fields)) return false;
+
+  const financials = company.financials;
+  if (!isObject(financials)) return false;
+  const requiredFinancials = [
+    "annualRevenueKrw",
+    "operatingProfitKrw",
+    "cashAndEquivalentsKrw",
+    "currentAssetsKrw",
+    "currentLiabilitiesKrw",
+    "totalDebtKrw",
+  ] as const;
+  const nullableFinancials = [
+    "existingOrderBacklogKrw",
+    "averageCollectionDays",
+    "averagePaymentDays",
+  ] as const;
+
+  const validFields = Object.values(fields).every(
+    (field) =>
+      isObject(field) &&
+      ["procurement", "company-financial-csv", "user-input", "model"].includes(
+        String(field.origin),
+      ) &&
+      ["source", "user-assumption", "model-derived"].includes(String(field.evidence)) &&
+      (field.detail === undefined || typeof field.detail === "string") &&
+      (field.asOfDate === undefined || isNullableString(field.asOfDate)),
+  );
+
+  return (
+    typeof company.stableKey === "string" &&
+    company.source === "company-financial-csv" &&
+    isNullableString(company.asOfDate) &&
+    requiredFinancials.every((field) => isFiniteNumber(financials[field])) &&
+    nullableFinancials.every((field) => isNullableNumber(financials[field])) &&
+    ["notice", "award", "contract"].includes(String(procurement.resource)) &&
+    ["construction", "service", "goods"].includes(String(procurement.kind)) &&
+    ["koneps-live", "demo"].includes(String(procurement.source)) &&
+    isNullableString(procurement.referenceUrl) &&
+    isNullableString(procurement.winnerName) &&
+    ["opportunity", "awarded", "contracted"].includes(
+      String(procurement.lifecycleStage),
+    ) &&
+    ["matched", "mismatch", "unknown", "not-applicable"].includes(
+      String(procurement.bidderMatch),
+    ) &&
+    validFields &&
+    Array.isArray(value.warnings) &&
+    value.warnings.every((warning) => typeof warning === "string")
+  );
+}
+
 function isContractRecord(value: unknown): value is ContractRecord {
   if (!value || typeof value !== "object") return false;
   const record = value as Record<string, unknown>;
@@ -71,7 +144,9 @@ function isContractRecord(value: unknown): value is ContractRecord {
     ["micro", "small", "medium", "large"].includes(String(record.companySize)) &&
     ["monthly", "milestone", "completion"].includes(String(record.paymentSchedule)) &&
     ["verified", "estimated", "synthetic"].includes(String(record.dataQuality)) &&
-    typeof record.isSynthetic === "boolean"
+    typeof record.isSynthetic === "boolean" &&
+    (record.description === undefined || typeof record.description === "string") &&
+    (record.provenance === undefined || hasValidProvenance(record.provenance))
   );
 }
 

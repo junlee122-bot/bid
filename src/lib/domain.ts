@@ -6,6 +6,54 @@ export type DataQuality = "verified" | "estimated" | "synthetic";
 
 export type RiskLevel = "low" | "caution" | "high" | "critical";
 
+export type ProcurementLifecycleStage = "opportunity" | "awarded" | "contracted";
+
+export type BidderMatchStatus = "matched" | "mismatch" | "unknown" | "not-applicable";
+
+export type FieldEvidenceType = "source" | "user-assumption" | "model-derived";
+
+export interface ContractFieldProvenance {
+  /** System or actor that supplied the value, never a secret or raw identifier. */
+  origin: "procurement" | "company-financial-csv" | "user-input" | "model";
+  evidence: FieldEvidenceType;
+  detail?: string;
+  asOfDate?: string | null;
+}
+
+export interface CompanyFinancialSnapshot {
+  annualRevenueKrw: number;
+  operatingProfitKrw: number;
+  cashAndEquivalentsKrw: number;
+  currentAssetsKrw: number;
+  currentLiabilitiesKrw: number;
+  totalDebtKrw: number;
+  existingOrderBacklogKrw: number | null;
+  averageCollectionDays: number | null;
+  averagePaymentDays: number | null;
+}
+
+export interface ContractDataProvenance {
+  company: {
+    /** Stable pseudonymous key. Raw business registration numbers are never retained. */
+    stableKey: string;
+    source: "company-financial-csv";
+    asOfDate: string | null;
+    financials: CompanyFinancialSnapshot;
+  };
+  procurement: {
+    resource: "notice" | "award" | "contract";
+    kind: "construction" | "service" | "goods";
+    source: "koneps-live" | "demo";
+    referenceUrl: string | null;
+    winnerName: string | null;
+    lifecycleStage: ProcurementLifecycleStage;
+    bidderMatch: BidderMatchStatus;
+  };
+  /** Audit trail for values copied, entered, or derived during record creation. */
+  fields: Record<string, ContractFieldProvenance>;
+  warnings: string[];
+}
+
 /**
  * All monetary fields use KRW and all percentage fields use percentage points.
  * `estimatedTotalCostKrw` contains contract-specific costs only. Company-wide
@@ -41,6 +89,8 @@ export interface ContractRecord {
   dataQuality: DataQuality;
   isSynthetic: boolean;
   description?: string;
+  /** Optional for records saved before provenance tracking was introduced. */
+  provenance?: ContractDataProvenance;
 }
 
 /** Stress values are deltas from the contract's base assumptions. */
@@ -119,6 +169,16 @@ export interface FinancingRecommendation {
   warnings: string[];
 }
 
+export interface CorporateFinancialSignals {
+  asOfDate: string | null;
+  currentRatioPct: number | null;
+  netWorkingCapitalKrw: number;
+  debtToRevenuePct: number | null;
+  backlogToRevenuePct: number | null;
+  averageCollectionDays: number | null;
+  averagePaymentDays: number | null;
+}
+
 export interface ContractAnalysis {
   contractId: string;
   procurementId: string;
@@ -153,6 +213,8 @@ export interface ContractAnalysis {
   riskLevel: RiskLevel;
   riskLabel: string;
   riskContributions: RiskContribution[];
+  /** Derived only when a structured company-financial provenance snapshot exists. */
+  corporateFinancialSignals: CorporateFinancialSignals | null;
   monthlyCashflow: MonthlyCashflow[];
   financingRecommendation: FinancingRecommendation;
   alerts: string[];
@@ -189,6 +251,15 @@ export interface PortfolioConcentration {
   contractCount: number;
 }
 
+export interface PortfolioCompanyFunding {
+  companyKey: string;
+  companyName: string;
+  contractCount: number;
+  minimumCashBalanceKrw: number;
+  liquidityBufferKrw: number;
+  fundingRequirementKrw: number;
+}
+
 export interface PortfolioAnalysis {
   scenario: ScenarioInputs;
   contracts: ContractAnalysis[];
@@ -197,7 +268,11 @@ export interface PortfolioAnalysis {
   totalAdjustedRevenueKrw: number;
   totalProjectedCostKrw: number;
   totalSurvivalMarginKrw: number;
+  /** Company-level requirement after reconciling shared cash and fixed outflows once. */
   totalFundingRequirementKrw: number;
+  /** Sum of stand-alone contract requirements before company-level reconciliation. */
+  conservativeContractFundingRequirementKrw: number;
+  companyFundingRequirements: PortfolioCompanyFunding[];
   weightedRiskScore: number;
   riskLevel: RiskLevel;
   riskLabel: string;

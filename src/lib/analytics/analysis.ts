@@ -1,6 +1,7 @@
 import type {
   ContractAnalysis,
   ContractRecord,
+  CorporateFinancialSignals,
   MonthlyCashflow,
   RiskContribution,
   RiskLevel,
@@ -204,6 +205,37 @@ interface RiskInputs {
   effectivePaymentDelayDays: number;
 }
 
+function buildCorporateFinancialSignals(
+  contract: ContractRecord,
+): CorporateFinancialSignals | null {
+  const provenance = contract.provenance;
+  if (!provenance) return null;
+  const financials = provenance.company.financials;
+  const currentAssets = nonNegative(financials.currentAssetsKrw);
+  const currentLiabilities = nonNegative(financials.currentLiabilitiesKrw);
+  const annualRevenue = nonNegative(financials.annualRevenueKrw);
+  const totalDebt = nonNegative(financials.totalDebtKrw);
+  const backlog = financials.existingOrderBacklogKrw === null
+    ? null
+    : nonNegative(financials.existingOrderBacklogKrw);
+
+  return {
+    asOfDate: provenance.company.asOfDate,
+    currentRatioPct: currentLiabilities > 0
+      ? round(safeDivide(currentAssets, currentLiabilities) * 100, 1)
+      : null,
+    netWorkingCapitalKrw: round(currentAssets - currentLiabilities),
+    debtToRevenuePct: annualRevenue > 0
+      ? round(safeDivide(totalDebt, annualRevenue) * 100, 1)
+      : null,
+    backlogToRevenuePct: backlog !== null && annualRevenue > 0
+      ? round(safeDivide(backlog, annualRevenue) * 100, 1)
+      : null,
+    averageCollectionDays: financials.averageCollectionDays,
+    averagePaymentDays: financials.averagePaymentDays,
+  };
+}
+
 function buildRiskContributions(inputs: RiskInputs): RiskContribution[] {
   const marginPoints = clamp(((12 - inputs.survivalMarginPct) / 22) * 30, 0, 30);
   const shortfallRatio = safeDivide(
@@ -218,8 +250,27 @@ function buildRiskContributions(inputs: RiskInputs): RiskContribution[] {
     inputs.contract.monthlyDebtServiceKrw +
     inputs.contract.existingBorrowingsKrw * (inputs.stressedInterestRatePct / 100 / 12);
   const debtBurdenRatio = safeDivide(debtBurden, monthlyRevenue, debtBurden > 0 ? 1 : 0);
-  const debtPoints = clamp(debtBurdenRatio / 0.35, 0, 1) * 7 +
-    clamp(inputs.stressedInterestRatePct / 15, 0, 1) * 3;
+  const corporateSignals = buildCorporateFinancialSignals(inputs.contract);
+  const currentRatioPenalty = corporateSignals?.currentRatioPct === null ||
+    corporateSignals?.currentRatioPct === undefined
+    ? 0
+    : clamp((120 - corporateSignals.currentRatioPct) / 80, 0, 1);
+  const leveragePenalty = corporateSignals?.debtToRevenuePct === null ||
+    corporateSignals?.debtToRevenuePct === undefined
+    ? 0
+    : clamp((corporateSignals.debtToRevenuePct - 40) / 110, 0, 1);
+  const backlogPenalty = corporateSignals?.backlogToRevenuePct === null ||
+    corporateSignals?.backlogToRevenuePct === undefined
+    ? 0
+    : clamp((corporateSignals.backlogToRevenuePct - 80) / 120, 0, 1);
+  const debtPoints = corporateSignals
+    ? clamp(debtBurdenRatio / 0.35, 0, 1) * 5.5 +
+      clamp(inputs.stressedInterestRatePct / 15, 0, 1) * 2 +
+      currentRatioPenalty * 1.5 +
+      leveragePenalty * 0.5 +
+      backlogPenalty * 0.5
+    : clamp(debtBurdenRatio / 0.35, 0, 1) * 7 +
+      clamp(inputs.stressedInterestRatePct / 15, 0, 1) * 3;
   const bidPoints = clamp(((92 - inputs.contract.bidRatePct) / 15) * 10, 0, 10);
   const executionPoints =
     (inputs.contract.paymentSchedule === "completion" ? 4 : inputs.contract.paymentSchedule === "milestone" ? 2 : 0) +
@@ -256,8 +307,14 @@ function buildRiskContributions(inputs: RiskInputs): RiskContribution[] {
       label: "부채 상환부담",
       points: round(debtPoints, 1),
       maxPoints: 10,
-      displayValue: formatPct(debtBurdenRatio * 100),
-      explanation: "월평균 계약매출 대비 원리금·이자 부담과 금리 수준을 함께 반영합니다.",
+      displayValue: corporateSignals?.currentRatioPct === null ||
+        corporateSignals?.currentRatioPct === undefined
+        ? formatPct(debtBurdenRatio * 100)
+        : "상환 " + formatPct(debtBurdenRatio * 100) +
+          " · 유동 " + formatPct(corporateSignals.currentRatioPct),
+      explanation: corporateSignals
+        ? "월 상환부담·금리와 기업 재무의 유동비율·부채/매출·수주잔고 압력을 함께 반영합니다."
+        : "월평균 계약매출 대비 원리금·이자 부담과 금리 수준을 함께 반영합니다.",
     },
     {
       id: "bid-discount",
@@ -380,6 +437,7 @@ export function analyzeContract(
   });
   const riskScore = clamp(round(sum(riskContributions.map((factor) => factor.points)), 1), 0, 100);
   const riskLevel = getRiskLevel(riskScore);
+  const corporateFinancialSignals = buildCorporateFinancialSignals(contract);
 
   const alerts: string[] = [];
   if (survivalMargin < 0) alerts.push("금융비용 반영 후 계약 생존마진이 음수입니다.");
@@ -392,6 +450,23 @@ export function analyzeContract(
   }
   if (breakEvenShock < 5) alerts.push("추가 원가 상승을 견딜 수 있는 여력이 5% 미만입니다.");
   if (contract.dataQuality !== "verified") alerts.push("검증되지 않은 입력값은 실제 증빙으로 교체해야 합니다.");
+  if (
+    corporateFinancialSignals?.currentRatioPct !== null &&
+    corporateFinancialSignals?.currentRatioPct !== undefined &&
+    corporateFinancialSignals.currentRatioPct < 100
+  ) {
+    alerts.push("기업 유동비율이 100% 미만이어서 단기 상환여력 검토가 필요합니다.");
+  }
+  if (
+    corporateFinancialSignals?.backlogToRevenuePct !== null &&
+    corporateFinancialSignals?.backlogToRevenuePct !== undefined &&
+    corporateFinancialSignals.backlogToRevenuePct > 100
+  ) {
+    alerts.push("기존 수주잔고가 연매출을 초과해 동시 이행 부담을 확인해야 합니다.");
+  }
+  if (contract.provenance?.procurement.bidderMatch === "mismatch") {
+    alerts.push("조달 낙찰자와 분석 대상 기업이 일치하지 않아 가상 분석으로만 해석해야 합니다.");
+  }
 
   const assumptions = [
     "분석 통화는 원(KRW), 예측 기간은 계약 시작 후 12개월입니다.",
@@ -402,6 +477,9 @@ export function analyzeContract(
     "선금은 총 계약대금에서 차감하고 유보금은 준공 대금 지급 1개월 뒤 회수한다고 가정합니다.",
     "12개월 이후 잔여 계약대금과 12개월 내 기성·미회수 채권을 구분하며 팩토링은 후자만 대상으로 합니다.",
     "추가 금융비용은 최대 부족액의 평균 55%가 예상 자금기간 동안 인출된다는 보수적 근사치입니다.",
+    ...(corporateFinancialSignals
+      ? ["기업 재무 스냅샷의 유동비율·부채/매출·수주잔고/매출은 부채 상환부담 점수 안에서 최대 2.5점까지 반영합니다."]
+      : []),
   ];
 
   const withoutFinancing = {
@@ -433,6 +511,7 @@ export function analyzeContract(
     riskLevel,
     riskLabel: getRiskLabel(riskLevel),
     riskContributions,
+    corporateFinancialSignals,
     monthlyCashflow,
     alerts,
     assumptions,

@@ -1,6 +1,6 @@
 {
   "name": "bid-shield",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "type": "module",
   "private": true,
   "description": "공공조달 계약의 생존마진과 안전 금융조건을 설계하는 의사결정 앱",

@@ -36,6 +36,26 @@ const paymentScheduleLabel: Record<ContractRecord["paymentSchedule"], string> = 
   completion: "완료 후 일괄 지급",
 };
 
+const lifecycleStageLabel = {
+  opportunity: "입찰 전 기회",
+  awarded: "낙찰",
+  contracted: "계약 체결",
+} as const;
+
+const bidderMatchMeta = {
+  matched: { label: "기업 일치", variant: "success" as const },
+  mismatch: { label: "낙찰자 불일치", variant: "danger" as const },
+  unknown: { label: "일치 미확인", variant: "warning" as const },
+  "not-applicable": { label: "공고 단계", variant: "neutral" as const },
+};
+
+const provenanceOriginLabel = {
+  procurement: "나라장터 원천",
+  "company-financial-csv": "기업 재무 CSV",
+  "user-input": "사용자 가정",
+  model: "모델 파생",
+} as const;
+
 const contributionTone: Record<RiskLevel, ProgressTone> = {
   low: "success",
   caution: "primary",
@@ -552,6 +572,54 @@ export function ContractDetailPage({ contractId }: { contractId: string }) {
               <Definition label="고정원가 비중" value={formatPct(contract.fixedCostRatePct)} />
             </dl>
             {contract.description && <p className="mt-5 border-t border-border pt-4 text-xs leading-6 text-muted-foreground">{contract.description}</p>}
+            {analysis.corporateFinancialSignals && (
+              <div className="mt-5 border-t border-border pt-5">
+                <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <h4 className="text-sm font-semibold text-foreground">기업 재무역량 신호</h4>
+                    <p className="mt-1 text-xs text-muted-foreground">계약 현금흐름과 별도로 기업 재무 스냅샷에서 파생한 점검 지표</p>
+                  </div>
+                  <Badge variant="outline">
+                    기준일 {analysis.corporateFinancialSignals.asOfDate
+                      ? formatDate(analysis.corporateFinancialSignals.asOfDate)
+                      : "미입력"}
+                  </Badge>
+                </div>
+                <dl className="grid gap-x-6 gap-y-4 sm:grid-cols-2 lg:grid-cols-3">
+                  <Definition
+                    label="유동비율"
+                    value={analysis.corporateFinancialSignals.currentRatioPct === null
+                      ? "유동부채 0원 / 산정 제외"
+                      : formatPct(analysis.corporateFinancialSignals.currentRatioPct)}
+                  />
+                  <Definition label="순운전자본" value={formatKrw(analysis.corporateFinancialSignals.netWorkingCapitalKrw)} />
+                  <Definition
+                    label="총부채 / 연매출"
+                    value={analysis.corporateFinancialSignals.debtToRevenuePct === null
+                      ? "산정 불가"
+                      : formatPct(analysis.corporateFinancialSignals.debtToRevenuePct)}
+                  />
+                  <Definition
+                    label="수주잔고 / 연매출"
+                    value={analysis.corporateFinancialSignals.backlogToRevenuePct === null
+                      ? "미입력"
+                      : formatPct(analysis.corporateFinancialSignals.backlogToRevenuePct)}
+                  />
+                  <Definition
+                    label="평균 회수일"
+                    value={analysis.corporateFinancialSignals.averageCollectionDays === null
+                      ? "미입력"
+                      : analysis.corporateFinancialSignals.averageCollectionDays + "일"}
+                  />
+                  <Definition
+                    label="평균 지급일"
+                    value={analysis.corporateFinancialSignals.averagePaymentDays === null
+                      ? "미입력"
+                      : analysis.corporateFinancialSignals.averagePaymentDays + "일"}
+                  />
+                </dl>
+              </div>
+            )}
           </CardContent>
         </Card>
 
@@ -575,6 +643,88 @@ export function ContractDetailPage({ contractId }: { contractId: string }) {
           </CardContent>
         </Card>
       </section>
+
+      {contract.provenance && (
+        <section aria-label="데이터 계보와 결합 검증" className="mt-4">
+          <Card>
+            <CardHeader className="flex-row items-start justify-between gap-4">
+              <div>
+                <CardTitle>데이터 계보 · 결합 검증</CardTitle>
+                <CardDescription>이 결과가 어떤 기업·조달 원천과 추정 가정에서 만들어졌는지 역추적합니다.</CardDescription>
+              </div>
+              <div className="flex flex-wrap justify-end gap-2">
+                <Badge variant="primary">
+                  {lifecycleStageLabel[contract.provenance.procurement.lifecycleStage]}
+                </Badge>
+                <Badge variant={bidderMatchMeta[contract.provenance.procurement.bidderMatch].variant}>
+                  {bidderMatchMeta[contract.provenance.procurement.bidderMatch].label}
+                </Badge>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <dl className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                <Definition label="익명 기업키" value={contract.provenance.company.stableKey} />
+                <Definition
+                  label="재무 기준일"
+                  value={contract.provenance.company.asOfDate
+                    ? formatDate(contract.provenance.company.asOfDate)
+                    : "미입력"}
+                />
+                <Definition
+                  label="조달 원천"
+                  value={contract.provenance.procurement.resource + " · " + contract.provenance.procurement.kind}
+                />
+                <Definition
+                  label="낙찰자 원문"
+                  value={contract.provenance.procurement.winnerName ?? "공고 단계 / 미제공"}
+                />
+              </dl>
+
+              <div className="mt-5 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                {Object.entries(contract.provenance.fields).slice(0, 12).map(([fieldName, field]) => (
+                  <div key={fieldName} className="rounded-lg border border-border/75 bg-muted/20 p-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="truncate font-mono text-[11px] text-foreground">{fieldName}</span>
+                      <Badge variant={field.evidence === "source" ? "success" : "warning"}>
+                        {field.evidence === "source" ? "원천" : field.evidence === "user-assumption" ? "가정" : "파생"}
+                      </Badge>
+                    </div>
+                    <p className="mt-2 text-[11px] leading-5 text-muted-foreground">
+                      {provenanceOriginLabel[field.origin]}
+                      {field.detail ? " · " + field.detail : ""}
+                    </p>
+                  </div>
+                ))}
+              </div>
+
+              {contract.provenance.warnings.length > 0 && (
+                <Alert
+                  variant={contract.provenance.procurement.bidderMatch === "mismatch" ? "destructive" : "warning"}
+                  title="결합 검증 경고"
+                  className="mt-5"
+                >
+                  <ul className="list-disc space-y-1 ps-4">
+                    {contract.provenance.warnings.map((warning) => <li key={warning}>{warning}</li>)}
+                  </ul>
+                </Alert>
+              )}
+
+              {contract.provenance.procurement.referenceUrl && (
+                <a
+                  href={contract.provenance.procurement.referenceUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="mt-5 inline-flex items-center gap-2 rounded-lg border border-border px-4 py-2 text-xs font-semibold text-foreground transition-colors hover:border-primary/40 hover:bg-primary/8 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  나라장터 원문 대조
+                  <Icon name="externalLink" size={14} />
+                  <span className="sr-only">(새 탭에서 열림)</span>
+                </a>
+              )}
+            </CardContent>
+          </Card>
+        </section>
+      )}
 
       <Modal
         open={editorOpen}

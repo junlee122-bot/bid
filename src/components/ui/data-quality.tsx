@@ -63,7 +63,7 @@ export function DataQualityIndicator({
             데이터 품질
           </div>
           {sourceCount !== undefined && (
-            <p className="mt-1 text-xs text-muted-foreground">검증된 데이터 소스 {sourceCount}개</p>
+            <p className="mt-1 text-xs text-muted-foreground">추적 가능한 원천 {sourceCount}개</p>
           )}
         </div>
         <Badge variant={quality.badge} dot>

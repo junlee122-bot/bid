@@ -7,13 +7,16 @@ const stages = [
   ["01", "계약 정규화", "입찰·낙찰·계약 데이터와 기업 재무를 계약 기준일에 맞춰 정규화합니다."],
   ["02", "현금흐름 복원", "선급금·기성·잔금, 보증금, 계약원가, 운영비·채무상환·차입이자를 월별로 배치합니다."],
   ["03", "스트레스 적용", "원가상승, 결제지연, 금리변화와 물량변화가 생존마진에 미치는 영향을 계산합니다."],
-  ["04", "위험 분해", "마진·유동성·지연·부채·낙찰할인·이행부담별 점수와 기여도를 분리합니다."],
-  ["05", "금융안 설계", "현금부족액과 회수시점에 맞춰 선급금, 팩토링, 운전자금, 보증 준비금을 조합합니다."],
+  ["04", "확률 분포", "상관된 충격을 고정 시드로 반복해 현금부족 빈도와 P50·P90 방어선을 계산합니다."],
+  ["05", "위험 분해", "마진·유동성·지연·부채·낙찰할인·이행부담별 점수와 기여도를 분리합니다."],
+  ["06", "금융안 설계", "현금부족액과 회수시점에 맞춰 선급금, 팩토링, 운전자금, 보증 준비금을 조합합니다."],
+  ["07", "자금 배분", "한정된 예산을 긴급도·유동성·런웨이·경제성 순으로 배분하고 보류 사유를 남깁니다."],
 ] as const;
 
 const limitations = [
   "분석값은 계약 조건과 입력 가정에 따른 시나리오이며 대출승인·수익·부도방지를 보장하지 않습니다.",
   "위험점수는 설명 가능한 규칙 기반 우선순위 지표이며 부도확률로 통계 보정된 값이 아닙니다.",
+  "확률형 결과는 명시한 충격 분포 아래의 시뮬레이션 비율이며 실제 발생확률이나 예측 정확도를 뜻하지 않습니다.",
   "계약금액은 실제 매출 인식액 또는 입금액과 다를 수 있습니다.",
   "제품별 원가를 계약과 직접 연결하지 못한 경우 추정 원가와 민감도 구간을 사용합니다.",
   "나라장터 계약일은 대금 입금일이 아니므로 결제조건을 별도 입력해야 합니다.",
@@ -33,7 +36,7 @@ export function MethodologyPage() {
         위험점수는 계약 간 우선순위를 정하는 보조지표입니다. 실제 여신·보증 결정에는 원자료 검증, 현장실사, 법규와 기관별 심사기준이 추가되어야 합니다.
       </Alert>
 
-      <section className="mt-6 grid gap-4 lg:grid-cols-5" aria-labelledby="pipeline-heading">
+      <section className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4" aria-labelledby="pipeline-heading">
         <h2 id="pipeline-heading" className="sr-only">분석 파이프라인</h2>
         {stages.map(([step, title, description]) => (
           <Card key={step} className="relative overflow-hidden">
@@ -58,6 +61,7 @@ export function MethodologyPage() {
             <Formula label="월말 현금" formula="전월 현금 + 계약유입 − 계약원가 − 운영비 − 예정 채무상환 − 차입이자 ± 보증금" />
             <Formula label="원가충격 손익분기" formula="조정 계약매출 ÷ 물량조정 기준원가 − 1" />
             <Formula label="필요 유동성" formula="max(0, 목표 버퍼 − 12개월 최저 예상 현금잔액)" />
+            <Formula label="P90 방어선" formula="반복 표본 필요자금의 90번째 백분위수" />
           </CardContent>
         </Card>
 
@@ -73,6 +77,40 @@ export function MethodologyPage() {
             <Weight label="부채 상환부담" weight="10점" width="10%" />
             <Weight label="낙찰 할인폭" weight="10점" width="10%" />
             <Weight label="이행 복잡도" weight="10점" width="10%" />
+          </CardContent>
+        </Card>
+      </section>
+
+      <section className="mt-6 grid gap-6 lg:grid-cols-2">
+        <Card>
+          <CardHeader>
+            <CardTitle>확률형 스트레스 거버넌스</CardTitle>
+            <CardDescription>결과를 다시 만들 수 있도록 분포·시드·반복 수·엔진 버전을 보고서에 남깁니다.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3 text-xs leading-5 text-muted-foreground">
+            <GovernanceItem label="충격 변수" value="계약원가 · 지급지연 · 금리 · 물량" />
+            <GovernanceItem label="상관 구조" value="공통 불리 요인 + 변수별 독립 요인" />
+            <GovernanceItem label="기본 반복" value="500회 · 계약 ID 기반 고정 시드" />
+            <GovernanceItem label="출력" value="현금부족·음수 생존마진 빈도, P10~P95, 최악 표본, 민감도" />
+            <Alert variant="info" title="캘리브레이션 경계">
+              현재 분포는 보수적인 분석 가정입니다. KO-DLab에서 실제 원가·회수 이력을 확보하면 업종·기업규모별 분포를 학습/검증 데이터로 분리해 보정해야 합니다.
+            </Alert>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>제한 예산 배분 정책</CardTitle>
+            <CardDescription>모델이 돈을 어디에 왜 배분했는지 네 개 점수와 동점 규칙으로 설명합니다.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <Weight label="위험 긴급도" weight="35%" width="35%" />
+            <Weight label="매출 대비 유동성 공백" weight="25%" width="25%" />
+            <Weight label="현금 런웨이 긴급도" weight="25%" width="25%" />
+            <Weight label="양(+)의 생존마진 경제성" weight="15%" width="15%" />
+            <p className="rounded-lg border border-warning/20 bg-warning/8 p-3 text-xs leading-5 text-amber-100/80">
+              음수 생존마진 계약은 기본 정책에서 자금 배분을 보류하고 계약조건·원가구조를 사람이 먼저 재검토합니다.
+            </p>
           </CardContent>
         </Card>
       </section>
@@ -127,4 +165,8 @@ function Weight({ label, weight, width }: { label: string; weight: string; width
 
 function DataRow({ tier, data, quality, use }: { tier: string; data: string; quality: string; use: string }) {
   return <tr><td className="py-3 font-medium">{tier}</td><td className="py-3 text-muted-foreground">{data}</td><td className="py-3"><Badge variant="outline">{quality}</Badge></td><td className="py-3 text-muted-foreground">{use}</td></tr>;
+}
+
+function GovernanceItem({ label, value }: { label: string; value: string }) {
+  return <div className="flex items-start justify-between gap-4 rounded-lg border bg-background/40 p-3"><span>{label}</span><span className="text-end font-medium text-foreground">{value}</span></div>;
 }

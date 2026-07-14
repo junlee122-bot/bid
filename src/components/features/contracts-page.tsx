@@ -6,6 +6,7 @@ import { useDeferredValue, useMemo, useState } from "react";
 import { ActionLink, DataQualityBadge, EmptyContracts, RiskBadge, compactWon } from "@/components/features/contract-ui";
 import { PageHeader } from "@/components/layout/page-header";
 import { useWorkspace } from "@/components/providers/workspace-provider";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Icon } from "@/components/ui/icons";
 import { Input } from "@/components/ui/input";
@@ -18,6 +19,7 @@ import { formatDate, formatPct } from "@/lib/format";
 
 type RiskFilter = "all" | RiskLevel;
 type SortKey = "risk" | "funding" | "amount" | "margin" | "recent";
+const PAGE_SIZE = 25;
 
 const riskFilters: Array<{ value: RiskFilter; label: string }> = [
   { value: "all", label: "전체 위험" },
@@ -33,6 +35,7 @@ export function ContractsPage() {
   const deferredQuery = useDeferredValue(query);
   const [risk, setRisk] = useState<RiskFilter>("all");
   const [sort, setSort] = useState<SortKey>("risk");
+  const [page, setPage] = useState(1);
   const portfolio = useMemo(() => analyzePortfolio(contracts, defaultScenario), [contracts]);
 
   const rows = useMemo(() => {
@@ -66,6 +69,9 @@ export function ContractsPage() {
   }, [contracts, deferredQuery, portfolio.contracts, risk, sort]);
 
   const atRisk = portfolio.riskDistribution.high + portfolio.riskDistribution.critical;
+  const pageCount = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
+  const safePage = Math.min(page, pageCount);
+  const visibleRows = rows.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
 
   return (
     <>
@@ -79,7 +85,7 @@ export function ContractsPage() {
       <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4" aria-label="계약 탐색 요약">
         <SummaryItem label="전체" value={`${portfolio.contractCount}건`} />
         <SummaryItem label="주의·위험" value={`${atRisk}건`} tone={atRisk ? "danger" : "default"} />
-        <SummaryItem label="권고 필요자금" value={compactWon(portfolio.totalFundingRequirementKrw)} tone={portfolio.totalFundingRequirementKrw ? "warning" : "default"} />
+        <SummaryItem label="기업별 필요자금" value={compactWon(portfolio.totalFundingRequirementKrw)} tone={portfolio.totalFundingRequirementKrw ? "warning" : "default"} />
         <SummaryItem label="가중 위험점수" value={`${portfolio.weightedRiskScore.toFixed(1)}점`} />
       </div>
 
@@ -91,7 +97,7 @@ export function ContractsPage() {
               <Icon name="search" size={16} className="pointer-events-none absolute start-3 top-1/2 z-10 -translate-y-1/2 text-muted-foreground" />
               <Input
                 value={query}
-                onChange={(event) => setQuery(event.target.value)}
+                onChange={(event) => { setQuery(event.target.value); setPage(1); }}
                 placeholder="기업명, 계약명, 발주처, 공고번호 검색"
                 className="ps-9"
                 type="search"
@@ -99,13 +105,13 @@ export function ContractsPage() {
             </label>
             <label>
               <span className="sr-only">위험 등급 필터</span>
-              <Select value={risk} onChange={(event) => setRisk(event.target.value as RiskFilter)}>
+              <Select value={risk} onChange={(event) => { setRisk(event.target.value as RiskFilter); setPage(1); }}>
                 {riskFilters.map((filter) => <option key={filter.value} value={filter.value}>{filter.label}</option>)}
               </Select>
             </label>
             <label>
               <span className="sr-only">계약 정렬 방식</span>
-              <Select value={sort} onChange={(event) => setSort(event.target.value as SortKey)}>
+              <Select value={sort} onChange={(event) => { setSort(event.target.value as SortKey); setPage(1); }}>
                 <option value="risk">위험도 높은 순</option>
                 <option value="funding">자금 공백 큰 순</option>
                 <option value="amount">계약금액 큰 순</option>
@@ -116,12 +122,12 @@ export function ContractsPage() {
           </div>
           <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-border/70 pt-4">
             <p className="text-xs text-muted-foreground">
-              전체 {contracts.length.toLocaleString("ko-KR")}건 중 <strong className="font-semibold text-foreground">{rows.length.toLocaleString("ko-KR")}건</strong> 표시
+              전체 {contracts.length.toLocaleString("ko-KR")}건 중 <strong className="font-semibold text-foreground">{rows.length.toLocaleString("ko-KR")}건</strong> 검색 · 페이지당 {PAGE_SIZE}건
             </p>
             {(query || risk !== "all") && (
               <button
                 type="button"
-                onClick={() => { setQuery(""); setRisk("all"); }}
+                onClick={() => { setQuery(""); setRisk("all"); setPage(1); }}
                 className="inline-flex items-center gap-1.5 text-xs font-semibold text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
                 <Icon name="refresh" size={14} /> 필터 초기화
@@ -149,7 +155,7 @@ export function ContractsPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {rows.map(({ analysis, record }) => (
+                {visibleRows.map(({ analysis, record }) => (
                   <TableRow key={record.id}>
                     <TableCell className="max-w-[300px] ps-5 sm:ps-6">
                       <div className="flex items-start gap-3">
@@ -195,6 +201,35 @@ export function ContractsPage() {
                 ))}
               </TableBody>
             </Table>
+            {pageCount > 1 && (
+              <nav aria-label="계약 목록 페이지" className="flex items-center justify-between gap-3 border-t border-border px-5 py-4 sm:px-6">
+                <p className="text-xs text-muted-foreground">
+                  <span className="font-mono font-semibold text-foreground">{safePage}</span> / {pageCount} 페이지
+                </p>
+                <div className="flex gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    disabled={safePage <= 1}
+                    onClick={() => setPage(Math.max(1, safePage - 1))}
+                    leadingIcon={<Icon name="chevronLeft" size={14} />}
+                  >
+                    이전
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    disabled={safePage >= pageCount}
+                    onClick={() => setPage(Math.min(pageCount, safePage + 1))}
+                  >
+                    다음
+                    <Icon name="chevronRight" size={14} />
+                  </Button>
+                </div>
+              </nav>
+            )}
           </div>
         )}
       </Card>

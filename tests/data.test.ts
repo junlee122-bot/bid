@@ -14,6 +14,7 @@ registerHooks({
 });
 
 const {
+  assessWorkspaceDataQuality,
   DataMergeError,
   KonepsError,
   buildKonepsRequestUrl,
@@ -258,7 +259,50 @@ describe("data source merge", () => {
     assert.equal(contract.estimatedTotalCostKrw, 730_800_000);
     assert.equal(contract.availableCashKrw, company.cashAndEquivalents);
     assert.equal(contract.isSynthetic, false);
-    assert.match(contract.description ?? "", /사용자 가정/);
+    assert.equal(contract.provenance?.procurement.lifecycleStage, "awarded");
+    assert.equal(contract.provenance?.procurement.bidderMatch, "matched");
+    assert.match(contract.provenance?.company.stableKey ?? "", /^company_[0-9a-f]{8}$/);
+    assert.equal(contract.provenance?.company.asOfDate, "2026-06-30");
+    assert.equal(contract.provenance?.company.financials.currentAssetsKrw, company.currentAssets);
+    assert.equal(contract.provenance?.company.financials.currentLiabilitiesKrw, company.currentLiabilities);
+    assert.equal(
+      contract.provenance?.company.financials.existingOrderBacklogKrw,
+      company.existingOrderBacklog,
+    );
+    assert.equal(
+      contract.provenance?.company.financials.averageCollectionDays,
+      company.averageCollectionDays,
+    );
+    assert.equal(contract.provenance?.fields.estimatedCostRatePct.evidence, "user-assumption");
+    assert.match(
+      contract.provenance?.fields.estimatedCostRatePct.detail ?? "",
+      /영업이익률.*계약별 실제 원가가 아닙니다/,
+    );
+    assert.equal(JSON.stringify(contract).includes(company.businessRegistrationNo ?? "never"), false);
+    assert.match(contract.description ?? "", /사용자\/모델 가정/);
+
+    const notice = createContractRecordFromSources(
+      { ...procurement, id: "notice-1", resource: "notice", winnerName: null },
+      company,
+      assumptions,
+    );
+    assert.equal(notice.provenance?.procurement.lifecycleStage, "opportunity");
+    assert.equal(notice.provenance?.procurement.bidderMatch, "not-applicable");
+
+    const mismatch = createContractRecordFromSources(
+      {
+        ...procurement,
+        id: "contract-1",
+        resource: "contract",
+        winnerName: "완전히 다른 법인",
+        contractedAt: "2026-07-11T10:00:00+09:00",
+      },
+      company,
+      assumptions,
+    );
+    assert.equal(mismatch.provenance?.procurement.lifecycleStage, "contracted");
+    assert.equal(mismatch.provenance?.procurement.bidderMatch, "mismatch");
+    assert.match(mismatch.provenance?.warnings.join(" ") ?? "", /일치하지 않습니다/);
     assert.throws(
       () => createContractRecordFromSources(procurement, company, { ...assumptions, annualInterestRatePct: 51 }),
       (error: unknown) => error instanceof DataMergeError && error.field === "annualInterestRatePct",
@@ -267,5 +311,154 @@ describe("data source merge", () => {
       () => createContractRecordFromSources(procurement, company, { ...assumptions, guaranteeDepositRatePct: 31 }),
       (error: unknown) => error instanceof DataMergeError && error.field === "guaranteeDepositRatePct",
     );
+  });
+
+  it("normalizes common legal entity markers when matching the winner", () => {
+    const company = {
+      ...parseCompanyFinancialCsv(createCompanyImportTemplate()).records[0],
+      companyName: "주식회사 비드쉴드",
+    };
+    const procurement = {
+      id: "award-name-match",
+      resource: "award" as const,
+      kind: "goods" as const,
+      source: "koneps-live" as const,
+      isSynthetic: false,
+      bidNoticeNo: "20260700002",
+      bidNoticeOrder: "00",
+      title: "분석 장비 구매",
+      organization: "발주기관",
+      demandOrganization: "수요기관",
+      publishedAt: "2026-07-01T09:00:00+09:00",
+      deadlineAt: null,
+      openedAt: "2026-07-10T14:00:00+09:00",
+      contractedAt: null,
+      estimatedAmount: 100_000_000,
+      baseAmount: 98_000_000,
+      awardAmount: 87_000_000,
+      awardRate: 88.78,
+      winnerName: "( 주 ) 비드쉴드",
+      contractNumber: null,
+      contractMethod: "제한경쟁",
+      referenceUrl: "https://example.test/award-name-match",
+    };
+    const contract = createContractRecordFromSources(procurement, company, {
+      companySize: "small",
+      industryLabel: "제조업",
+      region: "서울특별시",
+      estimatedCostRatePct: 84,
+      monthlyOperatingCashOutflowKrw: 5_000_000,
+      monthlyDebtServiceKrw: 1_000_000,
+      annualInterestRatePct: 5.8,
+      durationMonths: 6,
+      paymentDelayDays: 30,
+      advancePaymentRatePct: 20,
+      retentionRatePct: 3,
+      guaranteeDepositRatePct: 5,
+      upfrontCostRatePct: 25,
+      fixedCostRatePct: 55,
+      paymentSchedule: "milestone",
+      companyDataQuality: "verified",
+    });
+
+    assert.equal(contract.provenance?.procurement.bidderMatch, "matched");
+  });
+});
+
+describe("workspace data quality", () => {
+  it("calculates completeness and date-based freshness from provenance", () => {
+    const company = parseCompanyFinancialCsv(createCompanyImportTemplate()).records[0];
+    const procurement = {
+      id: "quality-award",
+      resource: "award" as const,
+      kind: "service" as const,
+      source: "koneps-live" as const,
+      isSynthetic: false,
+      bidNoticeNo: "20260700003",
+      bidNoticeOrder: "00",
+      title: "데이터 품질 분석",
+      organization: "발주기관",
+      demandOrganization: "수요기관",
+      publishedAt: "2026-07-01T09:00:00+09:00",
+      deadlineAt: null,
+      openedAt: "2026-07-10T14:00:00+09:00",
+      contractedAt: null,
+      estimatedAmount: 1_000_000_000,
+      baseAmount: 980_000_000,
+      awardAmount: 870_000_000,
+      awardRate: 88.78,
+      winnerName: company.companyName,
+      contractNumber: null,
+      contractMethod: "제한경쟁",
+      referenceUrl: "https://example.test/quality-award",
+    };
+    const assumptions = {
+      companySize: "small" as const,
+      industryLabel: "정보통신",
+      region: "서울특별시",
+      estimatedCostRatePct: 84,
+      monthlyOperatingCashOutflowKrw: 52_000_000,
+      monthlyDebtServiceKrw: 8_000_000,
+      annualInterestRatePct: 5.8,
+      durationMonths: 10,
+      paymentDelayDays: 45,
+      advancePaymentRatePct: 20,
+      retentionRatePct: 3,
+      guaranteeDepositRatePct: 5,
+      upfrontCostRatePct: 25,
+      fixedCostRatePct: 55,
+      paymentSchedule: "milestone" as const,
+      companyDataQuality: "verified" as const,
+    };
+    const freshContract = createContractRecordFromSources(procurement, company, assumptions);
+    const fresh = assessWorkspaceDataQuality([freshContract], "2026-07-14");
+
+    assert.equal(fresh.sourceCount, 2);
+    assert.equal(fresh.contractCount, 1);
+    assert.equal(fresh.completeness, 100);
+    assert.equal(fresh.freshness > 90, true);
+    assert.equal(fresh.contractAssessments[0].financialAgeDays, 14);
+
+    const staleContract = {
+      ...freshContract,
+      id: "stale-contract",
+      provenance: {
+        ...freshContract.provenance!,
+        company: { ...freshContract.provenance!.company, asOfDate: "2024-06-30" },
+      },
+    };
+    const stale = assessWorkspaceDataQuality([staleContract], "2026-07-14");
+    assert.equal(stale.freshness, 0);
+    assert.equal(stale.issues.some((issue) => issue.code === "STALE_FINANCIALS"), true);
+
+    const undatedContract = {
+      ...freshContract,
+      id: "undated-contract",
+      provenance: {
+        ...freshContract.provenance!,
+        company: { ...freshContract.provenance!.company, asOfDate: null },
+      },
+    };
+    const undated = assessWorkspaceDataQuality([undatedContract], "2026-07-14");
+    assert.equal(undated.freshness, 0);
+    assert.equal(
+      undated.issues.some((issue) => issue.code === "MISSING_FINANCIAL_AS_OF_DATE"),
+      true,
+    );
+
+    const syntheticContract = {
+      ...freshContract,
+      id: "synthetic-contract",
+      isSynthetic: true,
+      dataQuality: "synthetic" as const,
+      provenance: {
+        ...freshContract.provenance!,
+        procurement: { ...freshContract.provenance!.procurement, source: "demo" as const },
+      },
+    };
+    const synthetic = assessWorkspaceDataQuality([syntheticContract], "2026-07-14");
+    assert.equal(synthetic.completeness <= 35, true);
+    assert.equal(synthetic.freshness <= 20, true);
+    assert.equal(synthetic.issues.some((issue) => issue.code === "SYNTHETIC_DATA"), true);
   });
 });
